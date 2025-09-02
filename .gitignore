@@ -1,0 +1,20 @@
+# os-specific files
+.DS_Store
+
+# rstudio files
+.Rhistory
+.RData
+.Rproj.user/
+
+# quarto/r markdown files
+*_cache/
+*.utf8.md
+*.knit.md
+
+# project folders
+analysis/
+scratch/
+
+# other possible clutter files
+*.tmp
+*.log

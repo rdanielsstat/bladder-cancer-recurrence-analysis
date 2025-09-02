@@ -1,0 +1,87 @@
+---
+title: "Bladder cancer recurrence analysis"
+author: "Rob Daniels"
+date: "`r Sys.Date()`"
+bibliography: bibliography/references.bib
+csl: bibliography/apa.csl
+format: 
+  html:
+    output-file: index.html
+    toc: true
+    toc-floating: true
+    df-print: kable
+execute:
+  warning: false
+  message: false
+editor: visual
+---
+
+## Description
+
+This document presents an analysis of the classic bladder cancer recurrence data. It illustrates advanced statistical approaches to recurrent events survival analysis while demonstrating the use of modern data science tools and workflows, including:
+
+-   Version control & reproducibility: GitHub, Quarto, Markdown, bibliographic integration
+-   Statistical programming: R
+-   Visualization & reporting: HTML output\
+-   Analytical methods: recurrent events survival analysis
+
+```{r}
+#| label: setup
+#| include: false
+
+# load libraries and data
+library(dplyr)
+library(survival)
+library(DT)
+
+data(cancer, package="survival")
+```
+
+## Data
+
+Data are from [@Byar1977]. Per the R survival package [documentation](https://rdrr.io/cran/survival/man/bladder.html), the `bladder1` data set is the full data set.
+
+<details>
+
+<summary>Click to show full data set.</summary>
+
+```{r}
+#| label: full_data
+#| echo: false
+datatable(bladder1,
+          options = list(
+            pageLength = 10,
+            scrollX = TRUE,
+            scrollY = "400px"
+            )
+)
+```
+
+</details>
+
+## Descriptives
+
+Number of subjects.
+
+```{r}
+#| label: number-of-subjects
+#| code-fold: true
+
+# number of subjects
+cat(length(unique(bladder1$id)))
+```
+
+Subjects per treatment arm.
+
+```{r}
+#| label: subject-count-per-trt
+#| code-fold: true
+
+# subject count and percent per treatment arm
+ids_per_trt <- bladder1 %>%
+  distinct(treatment, id) %>%
+  count(treatment, name = "subj") %>%
+  mutate(pct = round(100 * subj / sum(subj), 1))
+
+print(ids_per_trt, row.names = FALSE)
+```
