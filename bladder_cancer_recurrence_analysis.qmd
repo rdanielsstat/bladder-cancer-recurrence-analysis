@@ -33,18 +33,34 @@ This document presents an analysis of the classic bladder cancer recurrence data
 library(dplyr)
 library(survival)
 library(DT)
+library(ggplot2)
+library(plotly)
 
 data(cancer, package="survival")
 ```
 
 ## Data
 
-Data are from [@Byar1977]. Per the R survival package [documentation](https://rdrr.io/cran/survival/man/bladder.html), the `bladder1` data set is the full data set.
+Data are from [@Byar1977]. Per the R survival package [documentation](https://rdrr.io/cran/survival/man/bladder.html), the `bladder1` data set is the full data set. Patients entered the study after removal of superficial bladder tumors. They were randomized into one of three treatment arms and followed for tumor recurrence for up to 64 months. Censoring occurs either at loss to follow-up, death, or end of study. These are interval-level survival data and contain the following variables:
+```
+id        : subject ID
+treatment : treatment group (placebo, pyridoxine, or thiotepa)
+number    : number of initial tumors
+size      : size of the largest initial tumor (cm)
+recur     : cumulative number of recurrences
+start     : start of the interval (0 or previous event time)
+stop      : end of interval; recurrence or censoring time
+status    : end of interval code
+            (0 = censored, 1 = recurrence, 
+             2 = death from bladder disease, 
+             3 = other death or unknown)
+rtumor    : number of tumors at recurrence
+rsize     : size of largest tumor at recurrence (cm)
+enum      : event number
+```
 
 <details>
-
 <summary>Click to show full data set.</summary>
-
 ```{r}
 #| label: full_data
 #| echo: false
@@ -56,7 +72,6 @@ datatable(bladder1,
             )
 )
 ```
-
 </details>
 
 ## Descriptives
@@ -85,3 +100,104 @@ ids_per_trt <- bladder1 %>%
 
 print(ids_per_trt, row.names = FALSE)
 ```
+
+Total number of recurrences.
+
+```{r}
+#| label: recurrences
+#| code-fold: true
+
+# number of recurrences (2 equivalent ways)
+# cat(sum(tapply(bladder1$recur, bladder1$id, max)))
+cat(sum(bladder1$status == 1))
+```
+
+Recurrence frequencies. 52.5% of subjects had at least one recurrence.
+```{r}
+#| label: recurrence_freqs
+#| code-fold: true
+
+# recurrence frequencies
+recur_freqs <- bladder1 %>%
+  group_by(id) %>%
+  summarize(recurrences = max(recur, na.rm = TRUE), .groups = "drop") %>%
+  count(recurrences) %>%
+  mutate(pct = round(100 * n / sum(n), 1)) %>%
+  as.data.frame()
+
+print(recur_freqs, row.names = FALSE)
+```
+
+Distribution of number of recurrences.  Mean of 1.6 recurrences.
+```{r}
+#| label: recurrence_dist
+#| code-fold: true
+
+# distribution of number of recurrences
+summary(tapply(bladder1$recur, bladder1$id, max), digits = 2)
+```
+
+## Event plot
+```{r}
+#| label: event_plot
+#| code-fold: true
+#| fig-width: 12
+#| fig-height: 12
+#| dpi: 150
+
+# event plots
+plot_data <- bladder1 %>%
+  mutate(id_factor = factor(id, levels = unique(id)),
+         event = case_when(status == 1 ~ "Recurrence",
+                           status == 0 ~ "Censored",
+                           status == 2 ~ "Bladder cancer death",
+                           status == 3 ~ "Other death/unknown",
+                           TRUE        ~ NA_character_),
+         event = factor(event, levels = c(
+           "Recurrence",
+           "Censored",
+           "Bladder cancer death",
+           "Other death/unknown")))
+
+event_plot <- ggplot(plot_data, aes(y = id_factor)) +
+  geom_segment(aes(x = start, xend = stop, yend = id_factor), 
+               color = "grey60") + 
+  geom_point(data = filter(plot_data, !is.na(event)),
+             aes(x = stop, shape = event, colour = event,
+                 text = paste("ID:", id, "<br>Status:", event, 
+                              "<br>Time:", stop)), 
+             size = 1.5, stroke = 0.5) +
+  scale_shape_manual(
+    values = c(
+      "Recurrence"        = 16,
+      "Censored"          = 1,
+      "Bladder cancer death" = 4,
+      "Other death/unknown" = 17)) +
+  scale_color_manual(
+    values = c(
+      "Recurrence"        = "black",
+      "Censored"          = "black",
+      "Bladder cancer death" = "red",
+      "Other death/unknown" = "blue")) +
+  scale_y_discrete("Subject",
+                   expand = expansion(mult = c(0.02, 0.02))) +
+  scale_x_continuous("Months since enrollment") +
+  facet_wrap(~treatment, ncol = 1, scales = "free_y") +
+  coord_cartesian(clip = "off") +
+  theme_minimal(base_size = 12) +
+  theme(plot.margin = margin(15, 15, 15, 15),
+        legend.position = "right",
+        strip.placement = "outside",
+        strip.text.y = element_text(angle = 90),
+        axis.text.y = element_blank(),
+        axis.ticks.y = element_blank()) +
+  labs(shape = "Event type", color = "Event type")
+
+interactive_plot <- ggplotly(event_plot, tooltip = "text")
+
+htmlwidgets::saveWidget(interactive_plot, "bladder_recurrence_event_plot.html", selfcontained = TRUE)
+
+ggplotly(event_plot, tooltip = "text")
+```
+<br>
+[Click here to open an interactive plot in a new window](bladder_recurrence_event_plot.html){target="_blank"}
