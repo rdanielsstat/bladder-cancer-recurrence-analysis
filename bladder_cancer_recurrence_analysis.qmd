@@ -9,6 +9,8 @@ format:
     output-file: index.html
     toc: true
     toc-floating: true
+    html-math-method: mathjax
+    eqn-numbering: by-id
     df-print: kable
 execute:
   warning: false
@@ -22,8 +24,8 @@ This document presents an analysis of the classic bladder cancer recurrence data
 
 -   Version control & reproducibility: GitHub, Quarto, Markdown, bibliographic integration
 -   Statistical programming: R
--   Visualization & reporting: HTML output\
--   Analytical methods: recurrent events survival analysis
+-   Visualization & reporting: HTML, LaTeX, ggplot2, plotly
+-   Statistical methods: recurrent events survival analysis
 
 ```{r}
 #| label: setup
@@ -31,6 +33,7 @@ This document presents an analysis of the classic bladder cancer recurrence data
 
 # load libraries and data
 library(dplyr)
+library(tidyverse)
 library(survival)
 library(DT)
 library(ggplot2)
@@ -41,13 +44,14 @@ data(cancer, package="survival")
 
 ## Data
 
-Data are from [@Byar1977]. Per the R survival package [documentation](https://rdrr.io/cran/survival/man/bladder.html), the `bladder1` data set is the full data set. Patients entered the study after removal of superficial bladder tumors. They were randomized into one of three treatment arms and followed for tumor recurrence for up to 64 months. Censoring occurs either at loss to follow-up, death, or end of study. These are interval-level survival data and contain the following variables:
-```
+Data are from [@Byar1977]. Per the R survival package [documentation](https://rdrr.io/cran/survival/man/bladder.html){target="_blank"}, the `bladder1` data set is the full data set. Patients entered the study after removal of superficial bladder tumors. They were randomized into one of three treatment arms and followed for tumor recurrence for up to 64 months. Censoring occurs either at loss to follow-up or death These are interval-level survival data and contain the following variables:
+
+```         
 id        : subject ID
 treatment : treatment group (placebo, pyridoxine, or thiotepa)
 number    : number of initial tumors
 size      : size of the largest initial tumor (cm)
-recur     : cumulative number of recurrences
+recur     : number of recurrences
 start     : start of the interval (0 or previous event time)
 stop      : end of interval; recurrence or censoring time
 status    : end of interval code
@@ -60,7 +64,9 @@ enum      : event number
 ```
 
 <details>
+
 <summary>Click to show full data set.</summary>
+
 ```{r}
 #| label: full_data
 #| echo: false
@@ -72,9 +78,10 @@ datatable(bladder1,
             )
 )
 ```
+
 </details>
 
-## Descriptives
+## Full data set descriptives
 
 Number of subjects.
 
@@ -113,39 +120,42 @@ cat(sum(bladder1$status == 1))
 ```
 
 Recurrence frequencies. 52.5% of subjects had at least one recurrence.
+
 ```{r}
-#| label: recurrence_freqs
+#| label: recurrence-freqs
 #| code-fold: true
 
 # recurrence frequencies
 recur_freqs <- bladder1 %>%
   group_by(id) %>%
   summarize(recurrences = max(recur, na.rm = TRUE), .groups = "drop") %>%
-  count(recurrences) %>%
-  mutate(pct = round(100 * n / sum(n), 1)) %>%
+  count(recurrences, name = "subj") %>%
+  mutate(pct = round(100 * subj / sum(subj), 1)) %>%
   as.data.frame()
 
 print(recur_freqs, row.names = FALSE)
 ```
 
-Distribution of number of recurrences.  Mean of 1.6 recurrences.
+Distribution of number of recurrences. The mean number of recurrences was 1.6.
+
 ```{r}
-#| label: recurrence_dist
+#| label: recurrence-dist
 #| code-fold: true
 
 # distribution of number of recurrences
 summary(tapply(bladder1$recur, bladder1$id, max), digits = 2)
 ```
 
-## Event plot
+## Recurrent events plot
+
 ```{r}
-#| label: event_plot
+#| label: events-plot
 #| code-fold: true
 #| fig-width: 12
 #| fig-height: 12
 #| dpi: 150
 
-# event plots
+# recurrent events plots
 plot_data <- bladder1 %>%
   mutate(id_factor = factor(id, levels = unique(id)),
          event = case_when(status == 1 ~ "Recurrence",
@@ -199,5 +209,263 @@ htmlwidgets::saveWidget(interactive_plot, "bladder_recurrence_event_plot.html", 
 
 ggplotly(event_plot, tooltip = "text")
 ```
-<br>
-[Click here to open an interactive plot in a new window](bladder_recurrence_event_plot.html){target="_blank"}
+
+<br> [Click here to open an interactive plot in a new window](bladder_recurrence_event_plot.html){target="_blank"}
+
+## Traditional analyses
+
+This section walks through several commonly used models for analyzing recurrent event data. Many of the results align with those published in the [SAS PROC PHREG documentation](https://documentation.sas.com/doc/en/statug/15.2/statug_phreg_examples10.htm){target="_blank"}. For consistency, the analyses use a reduced version of the `bladder1` data set.
+
+### Reduced data set
+
+The reduced data set includes only patients in the placebo and thiotepa treatment arms (86 subjects) and is limited to the first four recurrences for each subject. One subject had no follow-up and is typically excluded from analyses. Each subject contributes up to four observations (total observations = 344). For subjects with fewer than four recurrences, the last available recurrence is repeated to fill the remaining rows. The data set contains the following variables:
+
+```         
+id        : subject ID (regenerated)
+id_orig   : original ID from full data set
+trt       : treatment group (1 = placebo, 2 = thiotepa)
+number    : number of initial tumors
+size      : size of the largest initial tumor (cm)
+tstart    : start of the interval (0 or previous event time)
+tstop     : end of interval; recurrence or censoring time
+status    : end of interval code (0 = censored, 1 = recurrence)
+visit     : visit/event number
+```
+
+The following code generates the reduced data set from the full data set. IDs have been regenerated in order to match published versions of the data. `id_orig` corresponds to the subject ID in the full data set. `trt1–trt4`, `number1–number4`, and `size1–size4` are also created, which are corresponding `visit`-interaction variables used in later analyses.
+
+```{r}
+#| label: reduced-data
+#| code-fold: true
+
+# reduced data set (combination of WLW and AG styles)
+bladder_reduced <- bladder1 %>%
+  filter(treatment %in% c("placebo", "thiotepa"),
+         enum <= 4) %>%
+  mutate(id_orig = id, 
+         id = dense_rank(id),
+         trt = if_else(treatment == "placebo", 1, 2),
+         event = if_else(status == 1, 1, 0)) %>%
+  group_by(id) %>%
+  complete(enum = 1:4) %>%
+  arrange(id, enum) %>%
+  fill(id_orig, trt, number, size, stop, .direction = "down") %>%
+  mutate(tstart = as.integer(if_else(row_number() == 1, 0, lag(stop))),
+         status = if_else(is.na(event), 0, event),
+         visit = as.integer(enum)) %>%
+  ungroup() %>%
+  mutate(trt1 = trt*(visit == 1),
+         trt2 = trt*(visit == 2),
+         trt3 = trt*(visit == 3),
+         trt4 = trt*(visit == 4),
+         number1 = number*(visit == 1),
+         number2 = number*(visit == 2),
+         number3 = number*(visit == 3),
+         number4 = number*(visit == 4),
+         size1 = size*(visit == 1),
+         size2 = size*(visit == 2),
+         size3 = size*(visit == 3),
+         size4 = size*(visit == 4)) %>%
+  select(id, id_orig, trt, number, size, tstart, tstop = stop, status, visit, 
+         trt1, trt2, trt3, trt4, number1, number2, number3, number4, size1, 
+         size2, size3, size4)
+```
+
+<details>
+
+<summary>Click to show reduced data set.</summary>
+
+```{r}
+#| label: show-reduced-data
+#| echo: false
+datatable(bladder_reduced,
+          options = list(
+            pageLength = 10,
+            scrollX = TRUE,
+            scrollY = "400px"
+            )
+)
+```
+
+</details>
+
+### Reduced data descriptives
+
+Number of subjects.
+
+```{r}
+#| label: reduced-number-of-subjects
+#| code-fold: true
+
+# number of subjects
+cat(length(unique(bladder_reduced$id)))
+```
+
+Subjects per treatment arm.
+
+```{r}
+#| label: reduced-subject-count-per-trt
+#| code-fold: true
+
+# subject count and percent per treatment arm
+ids_per_trt <- bladder_reduced %>%
+  distinct(trt, id) %>%
+  count(trt, name = "subj") %>%
+  mutate(pct = round(100 * subj / sum(subj), 1)) %>%
+  as.data.frame()
+
+print(ids_per_trt, row.names = FALSE)
+```
+
+Total number of recurrences.
+
+```{r}
+#| label: reduced-recurrences
+#| code-fold: true
+
+# number of recurrences (2 equivalent ways)
+# cat(sum(tapply(bladder_reduced$status, bladder_reduced$id, sum)))
+cat(sum(bladder_reduced$status == 1))
+```
+
+Recurrence frequencies. 54.7% of subjects had at least one recurrence.
+
+```{r}
+#| label: reduced-recurrence-freqs
+#| code-fold: true
+
+# recurrence frequencies
+recur_freqs <- bladder_reduced %>%
+  group_by(id) %>%
+  summarize(recurrences = sum(status), .groups = "drop") %>%
+  count(recurrences, name = "subj") %>%
+  mutate(pct = round(100 * subj / sum(subj), 1)) %>%
+  as.data.frame()
+
+print(recur_freqs, row.names = FALSE)
+```
+
+Distribution of number of recurrences. The mean number of recurrences was 1.3.
+
+```{r}
+#| label: reduced-recurrence-dist
+#| code-fold: true
+
+# distribution of number of recurrences
+summary(tapply(bladder_reduced$status, bladder_reduced$id, sum), digits = 2)
+```
+
+### Reduced data recurrent events plot
+
+```{r}
+#| label: reduced-events-plot
+#| code-fold: true
+#| fig-width: 12
+#| fig-height: 12
+#| dpi: 150
+
+# recurrent events plots for reduced data
+plot_data <- bladder_reduced %>%
+  group_by(id) %>%
+  mutate(total_followup = max(tstop)) %>%
+  ungroup() %>%
+  mutate(id_factor = factor(id, levels =
+                              unique(id[order(total_followup)])),
+         trt = factor(trt, levels = c(1, 2),
+                      labels = c("placebo", "thiotepa")),
+         event = case_when(status == 1 ~ "Recurrence",
+                           status == 0 ~ "Censored",
+                           TRUE        ~ NA_character_),
+         event = factor(event, levels = c("Recurrence",
+                                          "Censored")))
+
+event_plot <- ggplot(plot_data, aes(y = id_factor)) +
+  geom_segment(aes(x = tstart, xend = tstop, yend = id_factor), 
+               color = "grey60") + 
+  geom_point(data = filter(plot_data, !is.na(event)),
+             aes(x = tstop, shape = event, colour = event,
+                 text = paste("ID:", id, "<br>Original ID:", id_orig, 
+                              "<br>Status:", event, "<br>Time:", tstop)),
+             size = 1.5, stroke = 0.5) +
+  scale_shape_manual(
+    values = c("Recurrence" = 16, 
+               "Censored"   = 1)) +
+  scale_color_manual(
+    values = c("Recurrence" = "black",
+               "Censored"   = "black")) +
+  scale_y_discrete("Subject",
+                   expand = expansion(mult = c(0.02, 0.02))) +
+  scale_x_continuous("Months since enrollment") +
+  facet_wrap(~trt, ncol = 1, scales = "free_y") +
+  coord_cartesian(clip = "off") +
+  theme_minimal(base_size = 12) +
+  theme(plot.margin = margin(15, 15, 15, 15),
+        legend.position = "right",
+        strip.placement = "outside",
+        strip.text.y = element_text(angle = 90),
+        axis.text.y = element_blank(),
+        axis.ticks.y = element_blank()) +
+  labs(shape = "Event type", color = "Event type")
+
+interactive_plot <- ggplotly(event_plot, tooltip = "text")
+
+htmlwidgets::saveWidget(interactive_plot, "bladder_recurrence_reduced_event_plot.html", selfcontained = TRUE)
+
+ggplotly(event_plot, tooltip = "text")
+```
+
+<br> [Click here to open an interactive plot in a new window](bladder_recurrence_reduced_event_plot.html){target="_blank"}
+
+### AG intensity model
+
+First, the Andersen–Gill (AG) intensity model [@Andersen1982] is fit to the data. This is a counting-process formulation of the semiparametric Cox model, where the hazard (intensity) at time $t$ for subject $i$ is
+
+$$
+\lambda_i(t \mid Z_i(t)) = \lambda_0(t) \, \exp \{ \beta^\top Z_i(t)\}
+$$ {#eq-ag}
+
+and where $\lambda_0(t)$ is an unspecified baseline intensity (hazard) function, $Z_i(t)$ is the vector of possibly time-varying covariates for subject $i$, and $\beta$ is the vector of regression coefficients. The AG method treats recurrent events as arising from a counting process and assumes a time-transformed Poisson process; covariates have multiplicative effects on both the mean and rate functions of the process.
+
+The code to fit this model in R is below.  The Efron method is used to handle tied event times; using the Breslow method produces results that exactly match those in the [SAS PROC PHREG documentation](https://documentation.sas.com/doc/en/statug/15.2/statug_phreg_examples10.htm){target="_blank"}.
+
+```{r}
+#| label: AG-intensity-model
+#| code-fold: true
+
+# fit AG intensity model
+intensity <- coxph(
+  Surv(tstart, tstop, status) ~ trt + number + size,
+  ties = "efron", # change to breslow for exact match with SAS results
+  data = bladder_reduced %>% filter(tstop > tstart)
+)
+
+summary(intensity)
+```
+
+The thiotepa arm shows a statistically significant reduction in the hazard of bladder cancer recurrence compared with placebo (HR = 0.63; 95% CI: 0.42–0.93; p = 0.020), corresponding to an estimated 37% lower instantaneous risk. Each additional initial tumor is associated with a 19% increase in hazard (HR = 1.19; 95% CI: 1.09–1.31; p \< 0.001). Tumor size at baseline shows no clear association with recurrence (HR = 0.96; p = 0.53).
+
+The model’s concordance index (C = 0.63) indicates relatively poor discrimination of which patients recur earlier versus later, and the global tests all confirm that at least one predictor is significantly related to recurrence risk.
+
+This model does not account for the dependent nature of recurrent events within subject.
+
+### Proportional means model
+
+Next, the proportional means model [@Lin2000] is fit to the data. The Efron method is used to handle tied event times; using the Breslow method produces results that exactly match those in the [SAS PROC PHREG documentation](https://documentation.sas.com/doc/en/statug/15.2/statug_phreg_examples10.htm){target="_blank"}.
+
+```{r}
+#| label: prop-means-model
+#| code-fold: true
+
+# Lin et al (2000) proportional means model
+prop_means <- coxph(
+  Surv(tstart, tstop, status) ~ trt + number + size + cluster(id),
+  ties = "efron", # change to breslow for exact match with SAS results
+  data = bladder_reduced %>% filter(tstop > tstart)
+)
+
+summary(prop_means)
+```
+
+# Resources
+
+- https://lmaowisc.github.io/BMI741/ (by Lu Mao [https://lmaowisc.github.io/])
