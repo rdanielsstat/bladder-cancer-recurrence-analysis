@@ -18,7 +18,7 @@ execute:
 editor: visual
 ---
 
-## Description
+# Description
 
 This document presents an analysis of the classic bladder cancer recurrence data. It illustrates advanced statistical approaches to recurrent events survival analysis while demonstrating the use of modern data science tools and workflows, including:
 
@@ -42,7 +42,7 @@ library(plotly)
 data(cancer, package="survival")
 ```
 
-## Data
+# Data
 
 Data are from [@Byar1977]. Per the R survival package [documentation](https://rdrr.io/cran/survival/man/bladder.html){target="_blank"}, the `bladder1` data set is the full data set. Patients entered the study after removal of superficial bladder tumors. They were randomized into one of three treatment arms and followed for tumor recurrence for up to 64 months. Censoring occurs either at loss to follow-up or death These are interval-level survival data and contain the following variables:
 
@@ -81,7 +81,7 @@ datatable(bladder1,
 
 </details>
 
-## Full data set descriptives
+# Full data set descriptives
 
 Number of subjects.
 
@@ -146,7 +146,7 @@ Distribution of number of recurrences. The mean number of recurrences was 1.6.
 summary(tapply(bladder1$recur, bladder1$id, max), digits = 2)
 ```
 
-## Recurrent events plot
+# Recurrent events plot
 
 ```{r}
 #| label: events-plot
@@ -212,11 +212,11 @@ ggplotly(event_plot, tooltip = "text")
 
 <br> [Click here to open an interactive plot in a new window](bladder_recurrence_event_plot.html){target="_blank"}
 
-## Traditional analyses
+# Traditional analyses
 
 This section walks through several commonly used models for analyzing recurrent event data. Many of the results align with those published in the [SAS PROC PHREG documentation](https://documentation.sas.com/doc/en/statug/15.2/statug_phreg_examples10.htm){target="_blank"}. For consistency, the analyses use a reduced version of the `bladder1` data set.
 
-### Reduced data set
+## Reduced data set
 
 The reduced data set includes only patients in the placebo and thiotepa treatment arms (86 subjects) and is limited to the first four recurrences for each subject. One subject had no follow-up and is typically excluded from analyses. Each subject contributes up to four observations (total observations = 344). For subjects with fewer than four recurrences, the last available recurrence is repeated to fill the remaining rows. The data set contains the following variables:
 
@@ -289,7 +289,7 @@ datatable(bladder_reduced,
 
 </details>
 
-### Reduced data descriptives
+## Reduced data descriptives
 
 Number of subjects.
 
@@ -355,7 +355,7 @@ Distribution of number of recurrences. The mean number of recurrences was 1.3.
 summary(tapply(bladder_reduced$status, bladder_reduced$id, sum), digits = 2)
 ```
 
-### Reduced data recurrent events plot
+## Reduced data recurrent events plot
 
 ```{r}
 #| label: reduced-events-plot
@@ -416,7 +416,7 @@ ggplotly(event_plot, tooltip = "text")
 
 <br> [Click here to open an interactive plot in a new window](bladder_recurrence_reduced_event_plot.html){target="_blank"}
 
-### AG intensity model
+## AG intensity model
 
 First, the Andersen–Gill (AG) intensity model [@Andersen1982] is fit to the data. This is a counting-process formulation of the semiparametric Cox model, where the hazard (intensity) at time $t$ for subject $i$ is
 
@@ -448,7 +448,7 @@ The model’s concordance index (C = 0.63) indicates relatively poor discriminat
 
 This model does not account for the dependent nature of recurrent events within subject.
 
-### Proportional means model
+## Proportional means model
 
 Next, the proportional means model [@Lin2000] is fit to the data. The Efron method is used to handle tied event times; using the Breslow method produces results that exactly match those in the [SAS PROC PHREG documentation](https://documentation.sas.com/doc/en/statug/15.2/statug_phreg_examples10.htm){target="_blank"}.
 
