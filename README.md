@@ -6,7 +6,7 @@ This repository contains an analysis of the classic bladder cancer recurrence da
 
 ## 🔗 View the document
 
-[Click here to open the analysis document](https://rdanielsstat.github.io/bladder-recurrence-analysis/)  
+[Click here to open the analysis document](https://rdanielsstat.github.io/bladder-cancer-recurrence-analysis/)  
 *(Right-click or Ctrl/Cmd + click to open in a new tab)*
 
 ---
