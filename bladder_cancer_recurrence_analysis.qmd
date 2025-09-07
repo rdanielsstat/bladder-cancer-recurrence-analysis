@@ -418,7 +418,7 @@ ggplotly(event_plot, tooltip = "text")
 
 ## AG intensity model
 
-First, the Andersen–Gill (AG) intensity model [@Andersen1982] is fit to the data. This is a counting-process formulation of the semiparametric Cox model, where the hazard (intensity) at time $t$ for subject $i$ is
+First, the Andersen–Gill (AG) intensity model [@Andersen1982] is fit to the data. This is a counting-process formulation of the semi-parametric Cox proportional hazards model, where the hazard (referred to as "intensity" here because events are repeatable) at time $t$ for subject $i$ is
 
 $$
 \lambda_i(t \mid Z_i(t)) = \lambda_0(t) \, \exp \{ \beta^\top Z_i(t)\}
@@ -442,9 +442,9 @@ intensity <- coxph(
 summary(intensity)
 ```
 
-The thiotepa arm shows a statistically significant reduction in the hazard of bladder cancer recurrence compared with placebo (HR = 0.63; 95% CI: 0.42–0.93; p = 0.020), corresponding to an estimated 37% lower instantaneous risk. Each additional initial tumor is associated with a 19% increase in hazard (HR = 1.19; 95% CI: 1.09–1.31; p \< 0.001). Tumor size at baseline shows no clear association with recurrence (HR = 0.96; p = 0.53).
+The thiotepa arm shows a statistically significant reduction in the hazard of bladder cancer recurrence compared with placebo (HR = 0.63; 95% CI: 0.42–0.93; $p$ = 0.020), corresponding to an estimated 37% lower instantaneous risk. Each additional initial tumor is associated with a 19% increase in hazard (HR = 1.19; 95% CI: 1.09–1.31; $p$ < 0.001). Tumor size at baseline shows no clear association with recurrence (HR = 0.96; $p$ = 0.53).
 
-The model’s concordance index (C = 0.63) indicates relatively poor discrimination of which patients recur earlier versus later, and the global tests all confirm that at least one predictor is significantly related to recurrence risk.
+The model’s concordance index ($C$ = 0.63) indicates relatively poor discrimination of which patients recur earlier versus later, and the global tests all confirm that at least one predictor is significantly related to recurrence risk.
 
 This model does not account for the dependent nature of recurrent events within subject.
 
@@ -465,6 +465,180 @@ prop_means <- coxph(
 
 summary(prop_means)
 ```
+
+The point estimates in the proportional means model are identical to those from the Andersen–Gill (AG) intensity model because both use the same partial likelihood and score equations for estimating regression parameters. The AG model characterizes the instantaneous rate (hazard) of the next event, conditional on an individual’s event history. In contrast, the proportional means model compares groups in terms of the mean (expected) cumulative number of events by time $t$, producing rate ratios for the mean cumulative count. For example, a coefficient of $log(0.67)$ indicates that, by time $t$, the treatment arm is expected to have about 33% fewer recurrences than the control arm.
+
+The difference lies in variance estimation. The proportional means model employs a robust (sandwich) variance estimator as developed by [@Lin1989] to account for within-subject correlation among repeated events. After this adjustment, the treatment effect is no longer statistically significant ($p = 0.08$).
+
+## Second data transformation
+
+To fit some additional types of models, the data will need to be transformed again. With the following, each risk set is restricted to patients who have experienced the corresponding number of prior events. For example, a patient who has only two events does not enter the risk sets for the third or fourth recurrence. A new variable, `gap_time`, is created to represent the time between successive recurrences. `trt1–trt4`, `number1–number4`, and `size1–size4` are corresponding `visit`-interaction variables used the following analyses.
+
+```{r}
+#| label: second-transformation-data
+#| code-fold: true
+
+# second data transformation, style used by PWP (R documentation refers to this 
+# as AG style) see https://rdrr.io/cran/survival/man/bladder.html
+bladder2_reduced <- bladder_reduced %>%
+  arrange(id, tstart, tstop) %>%
+  group_by(id) %>%
+  mutate(last_status = lag(status, default = 1)) %>%
+  filter(!(status == 0 & last_status == 0)) %>%
+  mutate(gap_time = tstop - tstart) %>%
+  ungroup() %>%
+  filter(gap_time != 0) %>%
+  mutate(trt1 = trt*(visit == 1),
+         trt2 = trt*(visit == 2),
+         trt3 = trt*(visit == 3),
+         trt4 = trt*(visit == 4),
+         number1 = number*(visit == 1),
+         number2 = number*(visit == 2),
+         number3 = number*(visit == 3),
+         number4 = number*(visit == 4),
+         size1 = size*(visit == 1),
+         size2 = size*(visit == 2),
+         size3 = size*(visit == 3),
+         size4 = size*(visit == 4)) %>%
+  select(id, id_orig, trt, number, size, tstart, tstop, status, visit, gap_time,
+         trt1, trt2, trt3, trt4, number1, number2, number3, number4, size1, 
+         size2, size3, size4)
+```
+
+<details>
+
+<summary>Click to show the transformed data set.</summary>
+
+```{r}
+#| label: show-second-transformation-data
+#| echo: false
+datatable(bladder2_reduced,
+          options = list(
+            pageLength = 10,
+            scrollX = TRUE,
+            scrollY = "400px"
+            )
+)
+```
+
+</details>
+
+The number of events and censored values are summarized below.
+
+```{r}
+#| label: num-event-censored
+#| code-fold: true
+
+summary_tab <- with(bladder2_reduced, table(visit, status)) |>
+  as.data.frame() |>
+  pivot_wider(names_from = status, values_from = Freq, values_fill = 0) |>
+  rename(censored = `0`, event = `1`) |>
+  mutate(total = censored + event,
+         pct_censored = round(100 * censored / total, 1))
+
+summary_tab <- bind_rows(
+  summary_tab,
+  summarise(summary_tab,
+            visit = "Total",
+            censored = sum(censored),
+            event = sum(event),
+            total = sum(total),
+            pct_censored = round(100 * censored / total, 1))) %>%
+  as.data.frame()
+
+print(summary_tab, row.names = FALSE)
+```
+
+## PWP total time model
+
+The following models are the total time (TT) models of Prentice, Williams, and Peterson [@Prentice1981]. They are stratified models. and the visit-specific variables, `trt1–trt4`, `number1–number4`, and `size1–size4`, are used in the uncommon effects models.
+
+### Uncommon effects
+
+```{r}
+#| label: pwp-tt-uc-model
+#| code-fold: true
+#| echo: true
+# PWP (1981) total time model with uncommon effects
+pwp_tt_uc <- coxph(
+  Surv(tstart, tstop, status) ~ trt1 + trt2 + trt3 + trt4 + 
+    number1 + number2 + number3 + number4 + 
+    size1 + size2 + size3 + size4 + strata(visit),
+  ties = "efron", # replace with "breslow" for exact match with SAS
+  data = bladder2_reduced
+)
+
+summary(pwp_tt_uc)
+```
+
+Results show that there is no significant treatment effect on the total time for any of the four tumor recurrences.
+
+### Common effects
+
+The PWP-TT model with common effects is shown below.
+
+```{r}
+#| label: pwp-tt-c-model
+#| code-fold: true
+#| echo: true
+
+# PWP (1981) total time model with common effects
+pwp_tt_c <- coxph(
+  Surv(tstart, tstop, status) ~ trt + number + size + strata(visit),
+  ties = "efron",
+  data = bladder2_reduced
+)
+
+summary(pwp_tt_c)
+```
+
+## PWP gap-time model
+
+The following models are the gap-time (PWP-GT) models of [@Prentice1981]. They are stratified models and the visit-specific variables, `trt1–trt4`, `number1–number4`, and `size1–size4`, are used in the uncommon effects models.
+
+### Uncommon effects
+
+```{r}
+#| label: pwp-gt-uc-model
+#| code-fold: true
+#| echo: true
+
+# PWP (1981) gap-time model with uncommon effects
+pwp_gt_uc <- coxph(
+  Surv(gap_time, status) ~ trt1 + trt2 + trt3 + trt4 + 
+    number1 + number2 + number3 + number4 + 
+    size1 + size2 + size3 + size4 + strata(visit),
+  ties = "efron", # replace with "breslow" for exact match with SAS
+  data = bladder2_reduced
+)
+
+summary(pwp_gt_uc)
+```
+
+Results show that there is no significant treatment effect on any of the gap-times for any of the four tumor recurrences. The coefficients for the gap-time model match the coefficients for the total time model for the first recurrence since they are the same for the first recurrence.
+
+### Common effects
+
+The PWP gap-time model with common effects is shown below.
+
+```{r}
+#| label: pwp-gt-c-model
+#| code-fold: true
+#| echo: true
+
+# PWP (1981) gap-time model with common effects
+pwp_gt_c <- coxph(
+  Surv(gap_time, status) ~ trt + number + size + strata(visit),
+  ties = "efron",
+  data = bladder2_reduced
+)
+
+summary(pwp_gt_c)
+```
+
+The results show there is no significant treatment effect.
+
+## Wei-Lin-Weissfeld model
 
 # Resources
 
