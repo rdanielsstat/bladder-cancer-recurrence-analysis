@@ -179,16 +179,16 @@ event_plot <- ggplot(plot_data, aes(y = id_factor)) +
              size = 1.5, stroke = 0.5) +
   scale_shape_manual(
     values = c(
-      "Recurrence"        = 16,
-      "Censored"          = 1,
+      "Recurrence"           = 16,
+      "Censored"             = 1,
       "Bladder cancer death" = 4,
-      "Other death/unknown" = 17)) +
+      "Other death/unknown"  = 17)) +
   scale_color_manual(
     values = c(
-      "Recurrence"        = "black",
-      "Censored"          = "black",
+      "Recurrence"           = "black",
+      "Censored"             = "black",
       "Bladder cancer death" = "red",
-      "Other death/unknown" = "blue")) +
+      "Other death/unknown"  = "blue")) +
   scale_y_discrete("Subject",
                    expand = expansion(mult = c(0.02, 0.02))) +
   scale_x_continuous("Months since enrollment") +
@@ -205,7 +205,9 @@ event_plot <- ggplot(plot_data, aes(y = id_factor)) +
 
 interactive_plot <- ggplotly(event_plot, tooltip = "text")
 
-htmlwidgets::saveWidget(interactive_plot, "bladder_recurrence_event_plot.html", selfcontained = TRUE)
+htmlwidgets::saveWidget(interactive_plot,
+                        "bladder_recurrence_event_plot.html",
+                        selfcontained = TRUE)
 
 ggplotly(event_plot, tooltip = "text")
 ```
@@ -562,8 +564,8 @@ The following models are the total time (TT) models of Prentice, Williams, and P
 # PWP (1981) total time model with uncommon effects
 pwp_tt_uc <- coxph(
   Surv(tstart, tstop, status) ~ trt1 + trt2 + trt3 + trt4 + 
-    number1 + number2 + number3 + number4 + 
-    size1 + size2 + size3 + size4 + strata(visit),
+    number1 + number2 + number3 + number4 + size1 + size2 + size3 + size4 + 
+    strata(visit), # or, equivalently: (trt + number + size) * strata(visit)
   ties = "efron", # replace with "breslow" for exact match with SAS
   data = bladder2_reduced
 )
@@ -640,6 +642,99 @@ The results show there is no significant treatment effect.
 
 ## Wei-Lin-Weissfeld model
 
-# Resources
+The multivariate marginal approach of [@Wei1989] is shown next.
 
-- https://lmaowisc.github.io/BMI741/ (by Lu Mao [https://lmaowisc.github.io/])
+```{r}
+#| label: wlw-model
+#| code-fold: true
+#| echo: true
+
+# WLW (1989) marginal model
+wlw <- coxph(
+  Surv(tstop, status) ~ trt1 + trt2 + trt3 + trt4 + 
+    number1 + number2 + number3 + number4 + 
+    size1 + size2 + size3 + size4 + strata(visit) + cluster(id),
+  ties = "efron", # replace with "breslow" to match SAS results
+  data = bladder_reduced,
+  x = TRUE
+)
+
+summary(wlw)
+```
+
+The following code further processes the results to construct global tests of no treatment (trt) effect. A global 4 degrees of freedom chi-square test is constructed first.
+
+```{r}
+#| label: wlw-model-trt-effect
+#| code-fold: true
+#| echo: true
+
+# extract trt variance-covariance and parameter estimates
+vcov_mat <- vcov(wlw)[c("trt1", "trt2", "trt3", "trt4"),
+                      c("trt1", "trt2", "trt3", "trt4")]
+beta_hat <- coef(wlw)[c("trt1", "trt2", "trt3", "trt4")]
+
+# construct global chi-square test
+chisq_4df <- as.numeric(t(beta_hat) %*% solve(vcov_mat, beta_hat))
+pval_chisq_4df <- pchisq(chisq_4df, df = length(beta_hat), lower.tail = FALSE)
+
+result <- data.frame(
+  chi_sq = round(chisq_4df, 2),
+  df = length(beta_hat),
+  p_value = signif(pval_chisq_4df, 4)
+)
+
+print(result, row.names = FALSE)
+```
+
+There is not enough evidence of a treatment effect in any of the four recurrences ($p$ = 0.4189). Optimal weights for estimating the common treatment effect can be calculated as follows.
+
+```{r}
+#| label: wlw-model-opt-weights
+#| code-fold: true
+#| echo: true
+
+# get optimal weights by minimizing the variance of the linear combination
+one <- rep(1, length(beta_hat))
+w <- solve(vcov_mat, one)
+
+# optimal weights
+w <- w / sum(w)   # normalize to sum to 1
+print(round(w, 5))
+```
+
+Test for average (common) treatment effect.
+
+```{r}
+#| label: wlw-model-avg-effect
+#| code-fold: true
+#| echo: true
+
+# average effect
+beta_common <- sum(w * beta_hat)
+
+# variance of average effect
+var_common <- as.numeric(1 / (t(one) %*% solve(vcov_mat, one)))
+se_common <- sqrt(var_common)
+
+# z-score
+z <- beta_common / se_common
+
+# p-value
+pval_z <- 2 * pnorm(-abs(z))
+
+result <- data.frame(
+  estimate = format(round(beta_common, 4), width = 9),
+  std_err  = format(round(se_common, 4), width = 8),
+  z_score  = format(round(z, 4), width = 8),
+  p_value  = format(signif(pval_z, 4), width = 8)
+)
+
+print(result, row.names = FALSE)
+```
+
+# Acknowledgements
+
+Paul Allison's *Survival Analysis Using SAS* [@Allison2010] and the course website for **BMI/STAT 741: Applied Survival Analysis** (Spring 2025), developed by Prof. Lu Mao (University of Wisconsin–Madison), were consulted to inform aspects of my analyses.
+
+ChatGPT [@openai2025gpt5] was used for coding assistance, editing, and checking some statistical concepts; all final decisions and interpretations are my own.
